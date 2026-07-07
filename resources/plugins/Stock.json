@@ -47,6 +47,13 @@
             "var": "code",
             "source": "code",
             "function": "regex_replace",
+            "pattern": "^us\\.",
+            "to": "us"
+          },
+          {
+            "var": "code",
+            "source": "code",
+            "function": "regex_replace",
             "pattern": "^\\?$",
             "to": ""
           },

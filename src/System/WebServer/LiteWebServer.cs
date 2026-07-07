@@ -217,8 +217,9 @@ namespace LiteMonitor.src.WebServer
                     if (val.HasValue)
                     {
                         // [Refactor] 使用 MetricUtils 统一格式化逻辑，确保与桌面端完全一致 (包括单位换算、颜色阈值、内存显示模式)
-                        valStr = MetricUtils.GetValueStr(item.Key, val.Value, false); // false = Panel Context (Standard)
-                        unit = MetricUtils.GetUnitStr(item.Key, val.Value, MetricUtils.UnitContext.Panel);
+                        valStr = MetricUtils.GetValueStr(item.Key, val.Value, false, item.UnitPanel); // false = Panel Context (Standard)
+                        string calculatedUnit = MetricUtils.GetUnitStr(item.Key, val.Value, MetricUtils.UnitContext.Panel);
+                        unit = MetricUtils.GetDisplayUnit(item.Key, calculatedUnit, item.UnitPanel);
                         
                         // GetProgressValue 返回 0.0-1.0，Web端通常需要 0-100
                         pct = MetricUtils.GetProgressValue(item.Key, val.Value) * 100.0;

@@ -102,7 +102,7 @@ namespace LiteMonitor.src.Core
         /// <summary>
         /// 获取纯数值字符串 (已处理缩放、舍入、紧凑模式)
         /// </summary>
-        public static string GetValueStr(string key, float? value, bool compact = false)
+        public static string GetValueStr(string key, float? value, bool compact = false, string? userFormat = null)
         {
             float v = value ?? 0.0f;
             var type = GetType(key);
@@ -111,7 +111,7 @@ namespace LiteMonitor.src.Core
             if (type == MetricType.Memory)
             {
                  var cfg = Settings.Load();
-                 if (cfg.MemoryDisplayMode == 1) // 容量模式
+                 if (cfg.MemoryDisplayMode == 1 && !IsPercentUnitOverride(userFormat)) // 容量模式
                  {
                      double totalGB = (key.IndexOf("MEM", StringComparison.OrdinalIgnoreCase) >= 0) 
                         ? Settings.DetectedRamTotalGB 
@@ -140,6 +140,13 @@ namespace LiteMonitor.src.Core
             // 内存百分比、负载、温度、功耗等
 
             return FormatValueAdaptive(v, -1);
+        }
+
+        private static bool IsPercentUnitOverride(string? userFormat)
+        {
+            if (string.IsNullOrWhiteSpace(userFormat)) return false;
+            return !userFormat.Contains("{u}", StringComparison.OrdinalIgnoreCase) &&
+                   userFormat.Contains("%", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -269,7 +276,7 @@ namespace LiteMonitor.src.Core
             };
         }
 
-        public static string GetDisplayUnit(string key, string calculatedUnit, string userFormat)
+        public static string GetDisplayUnit(string key, string calculatedUnit, string? userFormat)
         {
            if (string.IsNullOrEmpty(userFormat))
             {

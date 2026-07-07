@@ -127,7 +127,7 @@ namespace LiteMonitor
                  cfg = Settings.Load().MonitorItems.FirstOrDefault(x => x.Key == Key);
             }
             
-            string userFormat = isHorizontal ? cfg?.UnitTaskbar : cfg?.UnitPanel;
+            string? userFormat = isHorizontal ? cfg?.UnitTaskbar : cfg?.UnitPanel;
             HasCustomUnit = !string.IsNullOrEmpty(userFormat);
 
             // 3. Return TextValue (Plugin/Dashboard items)
@@ -169,23 +169,23 @@ namespace LiteMonitor
                 // [Refactor] 使用新的原子函数分别构建普通和紧凑文本
                 
                 // === 1. 更新主界面缓存 (Panel) ===
-                string valNormal = MetricUtils.GetValueStr(Key, DisplayValue, false);
+                string? userFmtPanel = cfg?.UnitPanel;
+                string valNormal = MetricUtils.GetValueStr(Key, DisplayValue, false, userFmtPanel);
                 string unitNormal = MetricUtils.GetUnitStr(Key, DisplayValue, MetricUtils.UnitContext.Panel);
-                string userFmtPanel = cfg?.UnitPanel;
                 
                 string finalUnitPanel = MetricUtils.GetDisplayUnit(Key, unitNormal, userFmtPanel);
                 _cachedNormalText = valNormal + finalUnitPanel;
 
                 // === 2. 更新任务栏缓存 (Taskbar/Horizontal) ===
                 // 逻辑修正：任务栏模式下，必须使用 Taskbar 上下文 (例如不带 /s)
-                string userFmtTaskbar = cfg?.UnitTaskbar;
+                string? userFmtTaskbar = cfg?.UnitTaskbar;
                 bool hasCustomTaskbar = !string.IsNullOrEmpty(userFmtTaskbar);
                 
                 // 自动模式：启用数值压缩 (Compact=true) 和 紧凑单位 (Taskbar Context)
                 // 自定义模式：不做数值压缩 (false)，但单位仍需基于 Taskbar 上下文计算基础值
                 bool compact = !hasCustomTaskbar;
                 
-                string valTaskbar = MetricUtils.GetValueStr(Key, DisplayValue, compact);
+                string valTaskbar = MetricUtils.GetValueStr(Key, DisplayValue, compact, userFmtTaskbar);
                 string unitTaskbar = MetricUtils.GetUnitStr(Key, DisplayValue, MetricUtils.UnitContext.Taskbar);
                 
                 string finalUnitTaskbar = MetricUtils.GetDisplayUnit(Key, unitTaskbar, userFmtTaskbar);
