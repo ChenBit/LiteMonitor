@@ -152,6 +152,10 @@ namespace LiteMonitor.src.Plugins
         [JsonPropertyName("skip_if_set")]
         public string SkipIfSet { get; set; } = ""; // If context[SkipIfSet] is present & not empty, skip this step
 
+        // 允许主源失败后执行备用步骤，默认仍中断执行链。
+        [JsonPropertyName("continue_on_error")]
+        public bool ContinueOnError { get; set; } = false;
+
         [JsonPropertyName("proxy")]
         public string Proxy { get; set; } = ""; // Optional: "host:port" for proxy
     }

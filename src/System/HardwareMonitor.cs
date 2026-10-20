@@ -38,6 +38,7 @@ namespace LiteMonitor.src.SystemServices
         // 状态标记 (防止并发重载)
         private volatile bool _isReloading = false;
         private volatile bool _isOpening = false;
+        private bool _gpuMapRepairAttempted = false;
 
         // 计时器相关
         private long _tickCounter = 0;
@@ -182,15 +183,15 @@ namespace LiteMonitor.src.SystemServices
 
                 lock (_lock)
                 {
-                    // [Optimization] 极简维护
-                    // 仅每10分钟做一次兜底检查 (内部自动 Rebuild)，无需关心返回值。
-                    // 即使重建了，ValueProvider 会在下一次取值时懒加载或直接从 Map 取，也不需要手动 PreCache。
-                    _sensorMap.EnsureFresh(_computer, _cfg);
+                    // 每十分钟兜底重建后，同步取值缓存，避免继续使用旧传感器对象。
+                    if (_sensorMap.EnsureFresh(_computer, _cfg))
+                        _valueProvider.PreCacheAllSensors(_sensorMap);
 
                     // 3秒一次 (慢速扫描)
                     bool isSlowScanTick = (_secondsCounter % 3 == 0); 
                     // 10秒一次 (磁盘后台扫描)
                     bool needDiskBgScan = (_secondsCounter % 10 == 0);
+                    bool repairGpuMapAfterLoop = false;
 
                     foreach (var hw in _computer.Hardware)
                     {
@@ -201,7 +202,11 @@ namespace LiteMonitor.src.SystemServices
                         { 
                             if (!requirements.ForceAll && !ShouldUpdateGpuHardware(hw)) continue;
 
-                            try { hw.Update(); }
+                            try
+                            {
+                                hw.Update();
+                                if (ShouldRepairGpuSensorMap()) repairGpuMapAfterLoop = true;
+                            }
                             catch (Exception ex)
                             {
                                 System.Diagnostics.Debug.WriteLine($"[GPU Error] Update failed: {ex.Message}");
@@ -237,6 +242,11 @@ namespace LiteMonitor.src.SystemServices
                              }
                              continue;
                         }
+                    }
+
+                    if (repairGpuMapAfterLoop)
+                    {
+                        RepairGpuSensorMap();
                     }
                 }
                 
@@ -317,7 +327,7 @@ namespace LiteMonitor.src.SystemServices
                         WarmUpMotherboardSensors();
                         WarmUpBatterySensors();
 
-                        // 先建立映射，再由正常刷新循环更新数值，避免启动时预热所有 GPU 拖慢 CPU/MEM 展示。
+                        // 仅在启用 GPU 监控或网页服务时预热显卡，确保延迟出现的传感器能进入映射。
                         _sensorMap.Rebuild(_computer, _cfg);
                         
                         // ★★★ [新增] 静态化预热：将所有传感器对象存入 Provider 缓存 ★★★
@@ -469,6 +479,7 @@ namespace LiteMonitor.src.SystemServices
                     _networkManager.ClearCache();
                     _diskManager.ClearCache();
                     _sensorMap.Clear();
+                    _gpuMapRepairAttempted = false;
                     
                     _valueProvider.ClearCache();
                     
@@ -493,10 +504,11 @@ namespace LiteMonitor.src.SystemServices
                     WarmUpBatterySensors();
 
                     DisableSensorHistory();
-                }
 
-                _sensorMap.Rebuild(_computer, _cfg);
-                _valueProvider.PreCacheAllSensors(_sensorMap);
+                    // 建图包含显卡更新，必须与正常采集、硬件关闭保持在同一把锁内。
+                    _sensorMap.Rebuild(_computer, _cfg);
+                    _valueProvider.PreCacheAllSensors(_sensorMap);
+                }
 
                 // 4. 优化 T1：重置后再次修剪内存
                 GC.Collect();
@@ -514,6 +526,7 @@ namespace LiteMonitor.src.SystemServices
                     _networkManager.ClearCache();
                     _diskManager.ClearCache();
                     _sensorMap.Clear();
+                    _gpuMapRepairAttempted = false;
                     _valueProvider.ClearCache();
                     HardwareScanner.ClearCache();
 
@@ -561,8 +574,52 @@ namespace LiteMonitor.src.SystemServices
             var activeGpu = _sensorMap.CachedGpu;
             if (activeGpu == null) return true;
 
-            // 当前面板只有一组 GPU 指标，刷新非当前显卡只会增加启动和轮询耗时。
-            return ReferenceEquals(hw, activeGpu);
+            // 用户手动选择首选显卡时，严格只刷新该显卡，避免改变既有行为。
+            if (_sensorMap.HasExplicitGpuSelection)
+            {
+                return ReferenceEquals(hw, activeGpu);
+            }
+
+            // 自动模式下，除默认显卡外，也刷新实际承载 GPU.* 指标的硬件。
+            return ReferenceEquals(hw, activeGpu) || _sensorMap.IsMappedGpuSensorHardware(hw);
+        }
+
+        private bool ShouldRepairGpuSensorMap()
+        {
+            if (_gpuMapRepairAttempted || !_cfg.IsAnyEnabled("GPU")) return false;
+
+            if (IsEnabledGpuSensorMissing("GPU.Load")) return true;
+            if (IsEnabledGpuSensorMissing("GPU.Temp")) return true;
+            if (IsEnabledGpuSensorMissing("GPU.Fan")) return true;
+
+            if (_cfg.IsAnyEnabled("GPU.VRAM") &&
+                !HasMappedSensor("GPU.VRAM.Used") &&
+                !HasMappedSensor("GPU.VRAM.Total") &&
+                !HasMappedSensor("GPU.VRAM.Load"))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsEnabledGpuSensorMissing(string key)
+        {
+            return _cfg.IsAnyEnabled(key) && !HasMappedSensor(key);
+        }
+
+        private bool HasMappedSensor(string key)
+        {
+            return _sensorMap.TryGetSensor(key, out var sensor) && sensor != null;
+        }
+
+        private void RepairGpuSensorMap()
+        {
+            if (_gpuMapRepairAttempted) return;
+
+            _gpuMapRepairAttempted = true;
+            _sensorMap.Rebuild(_computer, _cfg);
+            _valueProvider.PreCacheAllSensors(_sensorMap);
         }
 
         private static bool IsMoboOrCooler(IHardware hw)

@@ -1,0 +1,65 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using LiteMonitor.src.WebServer;
+
+// 直接编译仓库中的实际服务端，用本地连接验证合法请求头的兼容性。
+var samples = new (string Name, string KeyHeader)[]
+{
+    ("标准大小写", "Sec-WebSocket-Key: "),
+    ("代理常见大小写", "Sec-Websocket-Key: "),
+    ("全部小写", "sec-websocket-key: "),
+    ("冒号后无空格", "Sec-WebSocket-Key:"),
+    ("冒号后制表符", "Sec-WebSocket-Key:\t")
+};
+int failed = 0;
+foreach (var sample in samples)
+{
+    var listener = new TcpListener(IPAddress.Loopback, 0);
+    listener.Start();
+    using var client = new TcpClient();
+    await client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+    using var accepted = await listener.AcceptTcpClientAsync();
+    var manager = new WebSessionManager(_ => { });
+    var handler = manager.HandleClientAsync(accepted);
+    string request = "GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        sample.KeyHeader + "dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+    await client.GetStream().WriteAsync(Encoding.ASCII.GetBytes(request));
+    var buffer = new byte[1024];
+    string response = "无响应";
+    using var timeout = new CancellationTokenSource(1000);
+    try
+    {
+        int count = await client.GetStream().ReadAsync(buffer, timeout.Token);
+        response = Encoding.ASCII.GetString(buffer, 0, count).Split("\r\n")[0];
+    }
+    catch (OperationCanceledException) { }
+    bool success = response == "HTTP/1.1 101 Switching Protocols";
+    if (!success) failed++;
+    Console.WriteLine($"{sample.Name}：{response}，协议兼容性{(success ? "通过" : "失败")}");
+    client.Close();
+    accepted.Close();
+    listener.Stop();
+    await handler.WaitAsync(TimeSpan.FromSeconds(2));
+}
+Console.WriteLine($"共 {samples.Length} 项，通过 {samples.Length - failed} 项，失败 {failed} 项。");
+return failed == 0 ? 0 : 1;
+
+namespace LiteMonitor
+{
+    // 隔离硬件和磁盘配置，核验只依赖无密码模式的服务端处理逻辑。
+    public class Settings
+    {
+        public string WebServerPassword { get; set; } = "";
+        public static Settings Load() => new();
+    }
+}
+namespace LiteMonitor.src.Core { }
+namespace LiteMonitor.src.WebServer
+{
+    public static class WebPageContent
+    {
+        public static string GetAppIconBase64() => "";
+        public const string IndexHtml = "";
+    }
+}

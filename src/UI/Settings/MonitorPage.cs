@@ -498,7 +498,7 @@ namespace LiteMonitor.src.UI.SettingsPage
                 foreach (var block in blocks)
                 {
                     string alias = block.Header.InputAlias.Inner.Text.Trim();
-                    string defName = LanguageManager.T("Groups." + block.Header.GroupKey);
+                    string defName = LanguageManager.GetOriginal("Groups." + block.Header.GroupKey);
                     if (!string.IsNullOrEmpty(alias) && alias != defName) 
                         Config.GroupAliases[block.Header.GroupKey] = alias;
                     else 

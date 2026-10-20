@@ -28,6 +28,8 @@ namespace LiteMonitor.src.SystemServices
         
         // 显卡硬件缓存 (用于快速定位)
         public IHardware? CachedGpu { get; private set; }
+        // 只有配置实际匹配到唯一显卡时才启用严格单卡刷新。
+        public bool HasExplicitGpuSelection { get; private set; }
         // ★★★ [新增] 缓存总线传感器 (用于 Zen 5 频率修正) ★★★
         public ISensor? CpuBusSpeedSensor { get; private set; }
 
@@ -41,13 +43,15 @@ namespace LiteMonitor.src.SystemServices
 
         // [Fix] 回归 v1.2.9 的简单逻辑
         // 只有在初始化时才需要 build，之后除非手动触发或 10 分钟兜底，否则不需要任何检测。
-        // EnsureFresh 的返回值改为 void，因为不需要外部感知是否重建。
-        public void EnsureFresh(Computer computer, Settings cfg) 
+        // 返回是否重建，便于取值服务同步传感器对象缓存。
+        public bool EnsureFresh(Computer computer, Settings cfg)
         {
             if ((DateTime.Now - _lastMapBuild).TotalMinutes > 10)
             {
                 Rebuild(computer, cfg);
+                return true;
             }
+            return false;
         }
 
         public void Clear()
@@ -57,6 +61,7 @@ namespace LiteMonitor.src.SystemServices
                 _map.Clear();
                 CpuCoreCache.Clear();
                 CachedGpu = null;
+                HasExplicitGpuSelection = false;
                 CpuBusSpeedSensor = null;
                 // _lastSensorFingerprint = 0; // 已移除
             }
@@ -83,6 +88,22 @@ namespace LiteMonitor.src.SystemServices
             }
         }
 
+        public bool IsMappedGpuSensorHardware(IHardware hw)
+        {
+            lock (_lock)
+            {
+                foreach (var kv in _map)
+                {
+                    if (kv.Key.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase) &&
+                        ReferenceEquals(kv.Value.Hardware, hw))
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+
         // =======================================================================
         // [核心] 构建传感器映射与缓存 (最复杂的构建逻辑)
         // =======================================================================
@@ -102,12 +123,11 @@ namespace LiteMonitor.src.SystemServices
 
             string preferredGpu = cfg.PreferredGpu ?? "";
             IHardware? selectedGpu = HardwareScanner.FindGpuByConfig(computer, preferredGpu);
+            bool shouldWarmGpuForMapping = cfg.IsAnyEnabled("GPU") || cfg.WebServerEnabled;
 
             // 局部递归函数
             void RegisterTo(IHardware hw)
             {
-                //hw.Update();
-
                 bool isGpuHardware = HardwareScanner.IsGpuHardware(hw);
 
                 // 用户选择的显卡仍存在时只映射指定显卡；配置失效或旧名称无法唯一定位时回退自动优先级。
@@ -116,6 +136,11 @@ namespace LiteMonitor.src.SystemServices
                     !ReferenceEquals(hw, selectedGpu))
                 {
                     return;
+                }
+
+                if (isGpuHardware && shouldWarmGpuForMapping)
+                {
+                    TryUpdateGpuForMapping(hw);
                 }
 
                 // --- 填充 CPU 缓存 (用于加权平均) ---
@@ -157,7 +182,7 @@ namespace LiteMonitor.src.SystemServices
                     // ★★★ [新增] GPU 风扇映射 ★★★
                     var fan = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Fan);
                     if (fan == null) fan = hw.Sensors.FirstOrDefault(s => s.SensorType == SensorType.Control);
-                    if (fan != null) newMap["GPU.Fan"] = fan;
+                    if (fan != null) newMap.TryAdd("GPU.Fan", fan);
                 }
                 
                 // ★★★ [新增] 收集主板/SuperIO 传感器 ★★★
@@ -287,6 +312,7 @@ namespace LiteMonitor.src.SystemServices
                 
                 CpuCoreCache = newCpuCache;
                 CachedGpu = newGpu;
+                HasExplicitGpuSelection = selectedGpu != null;
                 CpuBusSpeedSensor = newBusSensor; // ★ 更新 Bus Sensor 缓存
                 
                 _lastMapBuild = DateTime.Now;
@@ -296,5 +322,17 @@ namespace LiteMonitor.src.SystemServices
 
         // 复用 HardwareRules 的字符串匹配，避免重复造轮子
         public static bool Has(string source, string sub) => HardwareRules.Has(source, sub);
+
+        private static void TryUpdateGpuForMapping(IHardware hw)
+        {
+            try
+            {
+                hw.Update();
+            }
+            catch
+            {
+                // 显卡 Update 失败时保持旧映射逻辑，避免建图阶段影响其他硬件数据。
+            }
+        }
     }
 }

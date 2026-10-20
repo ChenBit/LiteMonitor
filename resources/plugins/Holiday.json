@@ -2,9 +2,9 @@
   "id": "Holiday",
   "meta": {
     "name": "放假倒计时",
-    "version": "1.0",
+    "version": "1.1",
     "author": "LiteMonitor",
-    "description": "显示距离下一个法定节假日还有多少天（含调休计算）"
+    "description": "显示距离下一个法定节假日还有多少天（含调休计算）；接口无数据或不可用时显示元旦倒计时"
   },
   "inputs": [],
   "execution": {
@@ -13,13 +13,24 @@
     "steps": [
       {
         "id": "fetch_holiday",
-        "url": "http://timor.tech/api/holiday/next",
+        "url": "https://timor.tech/api/holiday/next",
         "method": "GET",
         "response_format": "json",
+        "continue_on_error": true,
         "extract": {
           "name": "holiday.name",
           "date": "holiday.date",
           "rest": "holiday.rest"
+        }
+      },
+      {
+        "id": "fallback_newyear",
+        "url": "native://newyear",
+        "skip_if_set": "rest",
+        "extract": {
+          "name": "name",
+          "date": "date",
+          "rest": "rest"
         }
       }
     ]

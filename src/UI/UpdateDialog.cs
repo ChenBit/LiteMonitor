@@ -9,7 +9,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Security.Principal;
-using System.Net.Security; // For SslClientAuthenticationOptions
 using LiteMonitor.src.Core; // 修复: 引用 Settings 类
 
 namespace LiteMonitor
@@ -217,14 +216,8 @@ namespace LiteMonitor
                             ? $"正在连接下载服务器..." 
                             : $"Connecting to server...";
 
-                        // 4. 配置 HttpClient (支持 SSL Bypass 和超时)
-                        var handler = new SocketsHttpHandler
-                        {
-                            SslOptions = new SslClientAuthenticationOptions
-                            {
-                                RemoteCertificateValidationCallback = delegate { return true; }
-                            }
-                        };
+                        // 安装包下载使用系统默认证书校验，证书异常时由现有逻辑尝试其他镜像。
+                        var handler = new SocketsHttpHandler();
 
                         using var http = new HttpClient(handler)
                         { 

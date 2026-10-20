@@ -1,0 +1,225 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Text.Json;
+using LiteMonitor;
+using LiteMonitor.src.Core;
+using LiteMonitor.src.Plugins;
+using LiteMonitor.src.SystemServices;
+using LiteMonitor.src.UI.Controls;
+using LiteMonitor.src.UI.SettingsPage;
+using LiteMonitor.src.WebServer;
+using LibreHardwareMonitor.Hardware;
+
+internal static class Program
+{
+    private static int _passed;
+    private static int _failed;
+    private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.NonPublic;
+    private const string Key = "dGhlIHNhbXBsZSBub25jZQ==";
+
+    [STAThread]
+    private static int Main()
+    {
+        // 只使用内存配置，避免读取或保存用户的真实配置。
+        typeof(Settings).GetField("_instance", BindingFlags.Static | BindingFlags.NonPublic)!.SetValue(null, new Settings());
+        LanguageManager.Load("zh");
+        Run("WebSocket 与 HTTP 回归", () => NetworkTests().GetAwaiter().GetResult(), count: false);
+        Run("中文分组别名保存与重置", () => AliasTests("zh"));
+        Run("英文分组别名保存与重置", () => AliasTests("en"));
+        Run("映射到期后更新循环同步缓存", CacheTests);
+        Run("汇率货币对与自定义简称", ExchangeTests);
+        Console.WriteLine($"总计通过 {_passed} 项，失败 {_failed} 项。");
+        return _failed == 0 ? 0 : 1;
+    }
+
+    private static void Run(string name, Action test, bool count = true)
+    {
+        try { test(); if (count) _passed++; Console.WriteLine($"通过：{name}"); }
+        catch (Exception ex) { _failed++; Console.WriteLine($"失败：{name}：{ex.GetBaseException().Message}"); }
+    }
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static string Request(string keyHeader = "Sec-WebSocket-Key: " + Key, string path = "/", string upgrade = "Upgrade: websocket") =>
+        $"GET {path} HTTP/1.1\r\nHost: localhost\r\n{upgrade}\r\nConnection: Upgrade\r\n{keyHeader}\r\nSec-WebSocket-Version: 13\r\n\r\n";
+
+    private static async Task NetworkTests()
+    {
+        foreach (var header in new[] { "Sec-WebSocket-Key: ", "Sec-Websocket-Key: ", "sec-websocket-key: ", "Sec-WebSocket-Key:", "Sec-WebSocket-Key:\t" })
+            await Exchange(Request(header + Key), "HTTP/1.1 101", websocket: true);
+        await Exchange(Request("Sec-WebSocket-Key: \t" + Key + " \t", upgrade: "upgrade:\tWebSocket"), "HTTP/1.1 101", websocket: true, fragmented: true);
+
+        // 非法键、重复键、伪字段和正文不能被误当作合法握手键。
+        foreach (var header in new[] { "", "Sec-WebSocket-Key:", "Sec-WebSocket-Key: invalid!", "Sec-WebSocket-Key: YQ==", "X-Sec-WebSocket-Key: " + Key, "Sec-WebSocket-Key: " + Key + "\r\nsec-websocket-key: " + Key })
+            await Exchange(Request(header), "");
+        await Exchange(Request("") + "Sec-WebSocket-Key: " + Key, "");
+        await Exchange(Request(upgrade: "X-Upgrade: websocket"), "HTTP/1.1 200");
+
+        Settings.Load().WebServerPassword = "test-password";
+        try
+        {
+            await Exchange(Request(), "HTTP/1.1 401");
+            await Exchange(Request(path: "/?pwd=wrong"), "HTTP/1.1 401");
+            await Exchange(Request(path: "/?pwd=test-password"), "HTTP/1.1 101", websocket: true, broadcast: true);
+            await Exchange("GET /api/snapshot HTTP/1.1\r\nHost: localhost\r\n\r\n", "HTTP/1.1 401");
+            await Exchange("GET /api/snapshot?pwd=test-password HTTP/1.1\r\nHost: localhost\r\n\r\n", "HTTP/1.1 200", snapshot: true);
+        }
+        finally { Settings.Load().WebServerPassword = ""; }
+        await Exchange("GET /api/snapshot HTTP/1.1\r\nHost: localhost\r\n\r\n", "HTTP/1.1 200", snapshot: true);
+        await Exchange("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n", "HTTP/1.1 200");
+    }
+
+    private static async Task Exchange(string request, string expected, bool websocket = false, bool fragmented = false, bool snapshot = false, bool broadcast = false)
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var client = new TcpClient();
+        var manager = new WebSessionManager(w => { w.WriteStartObject(); w.WriteNumber("test", 42); w.WriteEndObject(); });
+        Task? handler = null;
+        try
+        {
+            await client.ConnectAsync((IPEndPoint)listener.LocalEndpoint);
+            using var accepted = await listener.AcceptTcpClientAsync();
+            handler = manager.HandleClientAsync(accepted);
+            var stream = client.GetStream();
+            using var deadline = new CancellationTokenSource(5000);
+            byte[] requestBytes = Encoding.ASCII.GetBytes(request);
+            if (fragmented)
+            {
+                await stream.WriteAsync(requestBytes.AsMemory(0, requestBytes.Length - 2), deadline.Token);
+                await Task.Delay(40);
+                Check(!handler.IsCompleted, "分段请求尚未结束时不应提前处理");
+                await stream.WriteAsync(requestBytes.AsMemory(requestBytes.Length - 2), deadline.Token);
+            }
+            else await stream.WriteAsync(requestBytes, deadline.Token);
+
+            var response = new List<byte>();
+            var buffer = new byte[4096];
+            while (true)
+            {
+                int count = await stream.ReadAsync(buffer, deadline.Token);
+                if (count == 0) break;
+                response.AddRange(buffer.Take(count));
+                if (websocket && Encoding.ASCII.GetString(response.ToArray()).Contains("\r\n\r\n")) break;
+            }
+            string text = Encoding.UTF8.GetString(response.ToArray());
+            Check(expected == "" ? text == "" : text.StartsWith(expected), $"预期 {expected}，实际 {text.Split('\r')[0]}");
+            if (websocket)
+            {
+                Check(text.Contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo="), "标准握手键计算错误");
+                Check(!handler.IsCompleted, "成功握手后连接被提前关闭");
+                if (broadcast)
+                {
+                    manager.Start();
+                    byte[] frameHeader = new byte[2];
+                    await stream.ReadExactlyAsync(frameHeader, deadline.Token);
+                    Check(frameHeader[0] == 0x81 && frameHeader[1] == 11, "广播帧头错误");
+                    byte[] payload = new byte[frameHeader[1]];
+                    await stream.ReadExactlyAsync(payload, deadline.Token);
+                    Check(Encoding.UTF8.GetString(payload) == "{\"test\":42}", "广播数据错误");
+                }
+                // 合法空关闭帧带掩码，确认收循环退出并释放连接。
+                await stream.WriteAsync(new byte[] { 0x88, 0x80, 0, 0, 0, 0 }, deadline.Token);
+                Check(await stream.ReadAsync(buffer, deadline.Token) == 0, "关闭帧后连接未释放");
+            }
+            if (snapshot) Check(text.EndsWith("{\"test\":42}"), "HTTP 快照数据变化");
+            await handler.WaitAsync(TimeSpan.FromSeconds(2));
+            _passed++;
+        }
+        finally
+        {
+            manager.Stop();
+            client.Close();
+            listener.Stop();
+            if (handler != null) await handler.WaitAsync(TimeSpan.FromSeconds(2));
+        }
+    }
+
+    private static void AliasTests(string language)
+    {
+        LanguageManager.Load(language);
+        LanguageManager.ClearOverrides();
+        string original = LanguageManager.GetOriginal("Groups.CPU");
+        LanguageManager.SetOverride("Groups.CPU", "自定义处理器");
+        using var defaultHeader = new MonitorGroupHeader("CPU", "");
+        Check(defaultHeader.InputAlias.Inner.Text == original, "无别名时被旧翻译覆盖污染");
+        using var page = new MonitorPage();
+        var cfg = new Settings();
+        cfg.GroupAliases["CPU"] = "自定义处理器";
+        SetField(page, typeof(SettingsPageBase), "Config", cfg);
+        SetField(page, typeof(MonitorPage), "_workingList", new List<MonitorItemConfig>());
+        using var header = new MonitorGroupHeader("CPU", "自定义处理器");
+        using var rows = new Panel();
+        var blockType = typeof(MonitorPage).GetNestedType("GroupBlock", BindingFlags.NonPublic)!;
+        using var block = (Control)Activator.CreateInstance(blockType, header, rows)!;
+        var container = (Panel)GetField(page, "_container");
+        container.Controls.Add(block);
+        var save = typeof(MonitorPage).GetMethod("SaveToWorkingList", Fields)!;
+        for (int i = 0; i < 3; i++) save.Invoke(page, new object?[] { null });
+        Check(cfg.GroupAliases.GetValueOrDefault("CPU") == "自定义处理器", "反复保存清除了别名");
+        header.InputAlias.Inner.Text = " 新名称 ";
+        save.Invoke(page, new object?[] { null });
+        Check(cfg.GroupAliases["CPU"] == "新名称", "修改别名或去空格失败");
+        header.InputAlias.Inner.Text = original;
+        save.Invoke(page, new object?[] { null });
+        Check(!cfg.GroupAliases.ContainsKey("CPU"), "默认名称没有清除自定义别名");
+        header.InputAlias.Inner.Text = " ";
+        cfg.GroupAliases["CPU"] = "旧名称";
+        save.Invoke(page, new object?[] { null });
+        Check(!cfg.GroupAliases.ContainsKey("CPU"), "空别名没有恢复默认值");
+        LanguageManager.ClearOverrides();
+    }
+
+    private static void CacheTests()
+    {
+        // 不打开硬件或安装驱动，只给真实更新循环注入空硬件树和旧缓存。
+        var cfg = new Settings { UseWinPerCounters = false };
+        var computer = new Computer();
+        var map = new SensorMap();
+        var sync = new object();
+        using var perf = new PerformanceCounterManager();
+        var provider = new HardwareValueProvider(computer, cfg, map, null!, null!, null!, perf, sync, new());
+        provider.PreCacheAllSensors(map);
+        var cache = (Dictionary<string, ISensor>)GetField(provider, "_manualSensorCache");
+        cache["GPU.Load"] = null!;
+        var tickCache = (Dictionary<string, float>)GetField(provider, "_tickCache");
+        tickCache["GPU.Load"] = 99;
+        var monitor = (HardwareMonitor)RuntimeHelpers.GetUninitializedObject(typeof(HardwareMonitor));
+        foreach (var pair in new (string, object)[] { ("_cfg", cfg), ("_computer", computer), ("_sensorMap", map), ("_valueProvider", provider), ("_perfCounterManager", perf), ("_lock", sync), ("_lastTrafficTime", DateTime.Now), ("_secondsCounter", 1L) })
+            SetField(monitor, typeof(HardwareMonitor), pair.Item1, pair.Item2);
+        bool completed = false;
+        monitor.OnValuesUpdated += () => completed = true;
+        monitor.UpdateAll();
+        Check(completed, "更新循环未正常结束");
+        var refreshed = (Dictionary<string, ISensor>)GetField(provider, "_manualSensorCache");
+        Check(!ReferenceEquals(cache, refreshed) && !refreshed.ContainsKey("GPU.Load"), "到期重建后仍持有旧对象缓存");
+        Check(tickCache.Count == 0, "帧缓存没有清除");
+        monitor.UpdateAll();
+        Check(ReferenceEquals(refreshed, GetField(provider, "_manualSensorCache")), "未到期却重复预热缓存");
+        SetField(map, typeof(SensorMap), "_lastMapBuild", DateTime.Now.AddMinutes(-11));
+        monitor.UpdateAll();
+        Check(!ReferenceEquals(refreshed, GetField(provider, "_manualSensorCache")), "再次到期没有同步缓存");
+    }
+
+    private static void ExchangeTests()
+    {
+        var template = JsonSerializer.Deserialize<PluginTemplate>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "resources/plugins/Exchange.json")))!;
+        var output = template.Outputs.Single();
+        string Label(string to) => PluginProcessor.ResolveTemplate(output.ShortLabel, new() { ["from"] = "USD", ["to"] = to });
+        Check(Label("JPY") == "USD/JPY" && Label("GBP") == "USD/GBP", "相同基础货币的简称无法区分");
+        Check(PluginProcessor.ResolveTemplate(output.Format, new() { ["rate"] = "7.12" }) == "7.12", "汇率数值格式变化");
+        var config = new MonitorItemConfig { Key = "DASH.回归汇率", DynamicTaskbarLabel = Label("JPY"), TaskbarLabel = "自定简称" };
+        Check(MetricLabelResolver.ResolveShortLabel(config) == "自定简称", "覆盖了用户自定义简称");
+        config.TaskbarLabel = "";
+        Check(MetricLabelResolver.ResolveShortLabel(config) == "USD/JPY", "默认简称回退失败");
+    }
+
+    private static object GetField(object target, string name) => target.GetType().GetField(name, Fields)!.GetValue(target)!;
+    private static void SetField(object target, Type type, string name, object value) => type.GetField(name, Fields)!.SetValue(target, value);
+}

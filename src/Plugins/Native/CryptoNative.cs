@@ -44,11 +44,7 @@ namespace LiteMonitor.src.Plugins.Native
                 PooledConnectionLifetime = TimeSpan.FromMinutes(2),
                 MaxConnectionsPerServer = 8,
                 UseProxy = true,
-                Proxy = System.Net.WebRequest.GetSystemWebProxy(),
-                SslOptions = new System.Net.Security.SslClientAuthenticationOptions 
-                {
-                    RemoteCertificateValidationCallback = delegate { return true; }
-                }
+                Proxy = System.Net.WebRequest.GetSystemWebProxy()
             };
             var client = new HttpClient(handler);
             client.Timeout = TimeSpan.FromSeconds(12);

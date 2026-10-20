@@ -6,7 +6,6 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Net.Security; // ★★★ 新增：解决 SslClientAuthenticationOptions 引用 ★★★
 
 namespace LiteMonitor
 {
@@ -17,12 +16,7 @@ namespace LiteMonitor
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(5), // 连接重用
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(1),
-            MaxConnectionsPerServer = 32, // 增加到服务器的最大连接数
-            // ★★★ 修复：正确设置忽略 SSL 证书错误 (解决 CS0117 错误) ★★★
-            SslOptions = new SslClientAuthenticationOptions
-            {
-                RemoteCertificateValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
-            }
+            MaxConnectionsPerServer = 32 // 增加到服务器的最大连接数
         })
         {
             Timeout = TimeSpan.FromSeconds(25) // 增加全局超时时间，为下载预留更多时间

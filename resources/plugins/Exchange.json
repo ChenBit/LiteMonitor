@@ -51,7 +51,7 @@
     {
       "key": "rate",
       "label": "{{from}}/{{to}}",
-      "short_label": "{{from}}",
+      "short_label": "{{from}}/{{to}}",
       "format_val": "{{rate}}",
       "unit": ""
     }

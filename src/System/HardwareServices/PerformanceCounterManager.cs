@@ -14,6 +14,8 @@ namespace LiteMonitor.src.SystemServices
     {
         // --- 核心计数器实例 ---
         private PerformanceCounter? _cpuLoadCounter;      // CPU 总使用率 (含内核时间)
+        private PerformanceCounter? _cpuActualFreqCounter; // CPU 实际频率 (MHz)
+        private PerformanceCounter? _cpuProcessorFreqCounter; // CPU 处理器频率 (MHz)
         private PerformanceCounter? _cpuFreqCounter;      // CPU 性能百分比 (用于计算频率)
         private PerformanceCounter? _ramAvailableCounter; // 可用内存 (MB)
         private PerformanceCounter? _diskReadCounter;     // 磁盘总读取速度
@@ -72,7 +74,9 @@ namespace LiteMonitor.src.SystemServices
                     if (_cpuLoadCounter == null) 
                         _cpuLoadCounter = CreateCounter("Processor", "% Processor Time", "_Total"); // 旧系统回退
 
-                    // CPU 频率：读取性能百分比 (Performance Limit)，需配合基准频率计算
+                    // CPU 频率：优先读取 Windows 直接频率，旧系统缺失时再走百分比换算
+                    _cpuActualFreqCounter = CreateCounter("Processor Information", "Actual Frequency", "_Total");
+                    _cpuProcessorFreqCounter = CreateCounter("Processor Information", "Processor Frequency", "_Total");
                     _cpuFreqCounter = CreateCounter("Processor Information", "% Processor Performance", "_Total");
                     if (_cpuFreqCounter == null) 
                         _cpuFreqCounter = CreateCounter("Processor", "% Processor Performance", "_Total");
@@ -104,6 +108,8 @@ namespace LiteMonitor.src.SystemServices
                     // [Fix] 使用 SafeRead 代替直接调用 NextValue，防止某个计数器崩溃导致整个初始化失败 (#268)
                     
                     SafeRead(_cpuLoadCounter);
+                    SafeRead(_cpuActualFreqCounter);
+                    SafeRead(_cpuProcessorFreqCounter);
                     SafeRead(_cpuFreqCounter);
                     SafeRead(_ramAvailableCounter);
                     SafeRead(_diskReadCounter);
@@ -190,14 +196,36 @@ namespace LiteMonitor.src.SystemServices
 
         public float? GetCpuFreq()
         {
-            // 算法：基准频率 * (性能百分比 / 100)
-            // 例子：基准 3.0GHz * 150% = 4.5GHz
+            var actualFreq = SafeRead(_cpuActualFreqCounter);
+            if (IsValidCpuFrequency(actualFreq)) return actualFreq;
+
+            var processorFreq = SafeRead(_cpuProcessorFreqCounter);
             var percent = SafeRead(_cpuFreqCounter);
-            if (percent.HasValue && _cpuBaseFreq > 0)
+            return ResolveCpuFrequency(processorFreq, percent, _cpuBaseFreq);
+        }
+
+        private static float? ResolveCpuFrequency(float? processorFreq, float? percent, float registryFreq)
+        {
+            // Processor Frequency 是标称频率，优先作为性能百分比的基准，不能直接覆盖动态频率。
+            float baseFreq = IsValidCpuFrequency(processorFreq) ? processorFreq!.Value : registryFreq;
+            if (percent.HasValue)
             {
-                return _cpuBaseFreq * (percent.Value / 100.0f);
+                if (!float.IsFinite(percent.Value) || percent.Value <= 0 || !IsValidCpuFrequency(baseFreq)) return null;
+                float calculated = baseFreq * (percent.Value / 100.0f);
+                return IsValidCpuFrequency(calculated) ? calculated : null;
             }
-            return null;
+
+            // 只有缺失性能计数器时才回退到标称值；异常采样返回空，由上层尝试硬件传感器。
+            return IsValidCpuFrequency(processorFreq) ? processorFreq : null;
+        }
+
+        private static bool IsValidCpuFrequency(float? value)
+        {
+            return value.HasValue &&
+                   value.Value > 0f &&
+                   value.Value < 10000f &&
+                   !float.IsNaN(value.Value) &&
+                   !float.IsInfinity(value.Value);
         }
 
         /// <summary>
@@ -288,6 +316,8 @@ namespace LiteMonitor.src.SystemServices
         {
             // 释放所有计数器资源
             _cpuLoadCounter?.Dispose();
+            _cpuActualFreqCounter?.Dispose();
+            _cpuProcessorFreqCounter?.Dispose();
             _cpuFreqCounter?.Dispose();
             _ramAvailableCounter?.Dispose();
             _diskReadCounter?.Dispose();

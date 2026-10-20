@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
-using System.Net.Security;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -53,10 +52,7 @@ namespace LiteMonitor.src.Plugins
                     // 关键修复：允许 HttpClient 自动识别并解压 GZip 或 Deflate 数据
                     AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate,
                     
-                    SslOptions = new SslClientAuthenticationOptions
-                    {
-                        RemoteCertificateValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
-                    },
+                    // 使用系统默认证书校验，拒绝不可信或域名不匹配的 HTTPS 服务。
                     // [Fix] Reduce pooled connection lifetime to ensure timely DNS updates and socket release
                     PooledConnectionLifetime = TimeSpan.FromMinutes(2),
                     // [Fix] Limit connections per server to prevent ephemeral port exhaustion
@@ -263,6 +259,31 @@ namespace LiteMonitor.src.Plugins
 
         private async Task ExecuteStepAsync(PluginInstanceConfig inst, PluginExecutionStep step, Dictionary<string, string> context, string keySuffix, System.Threading.CancellationToken token)
         {
+            if (!step.ContinueOnError)
+            {
+                await ExecuteStepCoreAsync(inst, step, context, keySuffix, token);
+                return;
+            }
+
+            // 可回退的步骤只在成功后合并变量，避免部分结果或错误标记阻止备用步骤。
+            var stepContext = new Dictionary<string, string>(context);
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                await ExecuteStepCoreAsync(inst, step, stepContext, keySuffix, token);
+                token.ThrowIfCancellationRequested();
+                foreach (var kv in stepContext) context[kv.Key] = kv.Value;
+            }
+            catch (Exception ex)
+            {
+                // 请求超时也允许回退，但用户停用插件或退出时的取消必须继续传播。
+                token.ThrowIfCancellationRequested();
+                Debug.WriteLine($"Step {step.Id} fallback: {ex.Message}");
+            }
+        }
+
+        private async Task ExecuteStepCoreAsync(PluginInstanceConfig inst, PluginExecutionStep step, Dictionary<string, string> context, string keySuffix, System.Threading.CancellationToken token)
+        {
             try {
                 // 0. Check Skip Condition
                 if (!string.IsNullOrEmpty(step.SkipIfSet))
@@ -438,10 +459,6 @@ namespace LiteMonitor.src.Plugins
                 handler.UseProxy = true;
                 // 补上这一行，确保代理请求也能解压缩
                 handler.AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate;
-                handler.SslOptions = new SslClientAuthenticationOptions
-                {
-                    RemoteCertificateValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
-                };
                 // [Fix] Limit pooled connections for proxies too
                 handler.PooledConnectionLifetime = TimeSpan.FromMinutes(2);
                 handler.MaxConnectionsPerServer = 20;
@@ -486,6 +503,10 @@ namespace LiteMonitor.src.Plugins
                 string fb = args.ContainsKey("fallback") ? args["fallback"] : "";
                 return await CryptoNative.FetchAsync(s, fb);
             }
+            else if (uri.Host.Equals("newyear", StringComparison.OrdinalIgnoreCase))
+            {
+                return NewYearNative.GetCountdownJson(DateTime.Today);
+            }
             
             throw new Exception($"Unknown native host: {uri.Host}");
         }
@@ -511,7 +532,7 @@ namespace LiteMonitor.src.Plugins
             var client = GetClient(proxy);
             try
             {
-                var response = await client.SendAsync(request, token);
+                using var response = await client.SendAsync(request, token);
                 // Log($"[End] {url} Status:{response.StatusCode}");
 
                 // [Fix] Enforce success status code to prevent caching error pages (e.g. 404/500 HTML)
@@ -553,16 +574,14 @@ namespace LiteMonitor.src.Plugins
             
             if (fmt == "json" || fmt == "jsonp")
             {
-                if (json.StartsWith("{") || json.StartsWith("["))
+                // 必须实际解析响应，不能将 HTML 或空正文误判为成功并写入步骤缓存。
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+                foreach (var kv in extractRules)
                 {
-                    using var doc = JsonDocument.Parse(json);
-                    var root = doc.RootElement;
-                    foreach (var kv in extractRules)
-                    {
-                        // Support dynamic paths like "rates.{{to}}"
-                        string resolvedPath = PluginProcessor.ResolveTemplate(kv.Value, context);
-                        context[kv.Key] = PluginProcessor.ExtractJsonValue(root, resolvedPath);
-                    }
+                    // 支持 rates.{{to}} 这样的动态字段路径。
+                    string resolvedPath = PluginProcessor.ResolveTemplate(kv.Value, context);
+                    context[kv.Key] = PluginProcessor.ExtractJsonValue(root, resolvedPath);
                 }
             }
             else if (fmt == "text")
