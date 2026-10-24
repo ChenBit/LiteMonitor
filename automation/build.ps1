@@ -62,7 +62,10 @@ if ($SmokeViaDotNet) {
 $process = Start-Process @start
 try {
     if (!$process.WaitForExit(30000)) { $process.Kill(); throw '主程序启动冒烟测试超时' }
-    if ($process.ExitCode -ne 0 -or !(Test-Path $smokeResult)) { throw "主程序启动冒烟测试失败：$($process.ExitCode)" }
+    if ($process.ExitCode -ne 0 -or !(Test-Path $smokeResult)) {
+        $details = if (Test-Path $smokeResult) { [IO.File]::ReadAllText($smokeResult) } else { '进程未生成诊断文件' }
+        throw "主程序启动冒烟测试失败：$($process.ExitCode)；$details"
+    }
     $result = Get-Content $smokeResult -Raw | ConvertFrom-Json
     if ($result.version -ne $plan.version) { throw '启动后的版本不一致' }
 } finally { if (Test-Path $smokeResult) { Remove-Item -LiteralPath $smokeResult -Force } }

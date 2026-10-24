@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { version, compare, releasePath, validationPath, selectVersion, notes, hash, publish, verifyArtifacts, GitHub } from './release.mjs';
+import { execFileSync } from 'node:child_process';
+import { version, compare, releasePath, validationPath, selectVersion, notes, hash, publish, verifyArtifacts, GitHub, fingerprint as sourceFingerprint } from './release.mjs';
 
 const commit = 'a'.repeat(40);
 const fingerprint = 'b'.repeat(64);
@@ -44,6 +45,30 @@ test('中文日志按实际提交归类、去重并过滤无关记录', () => {
     assert.equal(text.match(/修复版本比较/g).length, 1);
     assert.doesNotMatch(text, /更新说明|Merge pull|Bump version/);
     assert.match(notes([], 'ChenBit/LiteMonitor', '', commit), /首次自动发布/);
+});
+test('实际 Git 树指纹忽略文档，但识别源码修改和删除', t => {
+    const directory = mkdtempSync(join(tmpdir(), 'litemonitor-fingerprint-'));
+    const original = process.cwd();
+    const command = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8' }).trim();
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    command('init', '-q');
+    command('config', 'user.name', 'Release tests');
+    command('config', 'user.email', 'tests@example.invalid');
+    const record = () => { command('add', '.'); command('commit', '-qm', 'test'); return command('rev-parse', 'HEAD'); };
+    writeFileSync(join(directory, 'LiteMonitor.csproj'), '<Project />');
+    writeFileSync(join(directory, 'README.md'), 'first');
+    const initial = record();
+    try {
+        process.chdir(directory);
+        const first = sourceFingerprint(initial);
+        writeFileSync(join(directory, 'README.md'), 'docs only');
+        assert.equal(sourceFingerprint(record()), first);
+        writeFileSync(join(directory, 'LiteMonitor.csproj'), '<Project Sdk="Microsoft.NET.Sdk" />');
+        const changed = sourceFingerprint(record());
+        assert.notEqual(changed, first);
+        rmSync(join(directory, 'LiteMonitor.csproj'));
+        assert.notEqual(sourceFingerprint(record()), changed);
+    } finally { process.chdir(original); }
 });
 
 function fixture(t) {
@@ -139,6 +164,15 @@ test('master 前进时不创建过期版本', async t => {
     client.head = 'c'.repeat(40);
     assert.equal(await publish(f.plan, f.directory, client, () => fingerprint), 'stale');
     assert.equal(client.release, null);
+});
+test('标题不符的已有草稿不会被公开', async t => {
+    const f = fixture(t), client = new MemoryGitHub();
+    client.failAfter = 'POST releases';
+    await assert.rejects(publish(f.plan, f.directory, client, () => fingerprint));
+    client.release.name = 'wrong version';
+    await assert.rejects(publish(f.plan, f.directory, client, () => fingerprint), /标题/);
+    assert.equal(client.release.draft, true);
+    assert.equal(client.assets.length, 0);
 });
 test('草稿附件没有服务端 digest 时下载并验证内容', async t => {
     const f = fixture(t), client = new MemoryGitHub();

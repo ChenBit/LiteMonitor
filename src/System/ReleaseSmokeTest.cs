@@ -28,8 +28,9 @@ namespace LiteMonitor
                 Application.Run(form);
                 File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "smoke-test-result.json"), JsonSerializer.Serialize(new { version = UpdateChecker.GetCurrentVersion() }));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "smoke-test-result.json"), JsonSerializer.Serialize(new { error = ex.ToString() }));
                 Environment.ExitCode = 1;
             }
         }

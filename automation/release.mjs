@@ -71,7 +71,7 @@ export function notes(commits, repository, previous, commit) {
         seen.add(key);
         const group = /^(feat|add|新增|增加)(\b|[:：(])/i.test(title) ? '新增'
             : /^(fix|bugfix|prevent|修复|修正)(\b|[:：(])/i.test(title) ? '修复' : '其他变更';
-        const safe = title.replace(/[\[\]<>`]/g, '');
+        const safe = (title.length > 240 ? title.slice(0, 240) + '…' : title).replace(/[\[\]<>`]/g, '');
         groups[group].push(`- ${safe}（[${sha.slice(0, 7)}](https://github.com/${repository}/commit/${sha})）`);
     }
     let body = previous ? '本次更新基于上一个正式版本之后的实际代码变更。\n' : '本仓库首次自动发布，包含当前源码和完整运行资源。\n';
