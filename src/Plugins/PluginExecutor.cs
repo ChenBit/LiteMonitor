@@ -591,8 +591,31 @@ namespace LiteMonitor.src.Plugins
             {
                 return NewYearNative.GetCountdownJson(DateTime.Today);
             }
-            
+            else if (uri.Host.Equals("multiping", StringComparison.OrdinalIgnoreCase))
+            {
+                string host = GetArg(args, "host");
+                string protocol = GetArg(args, "protocol", "icmp");
+                int port = ParseInt(GetArg(args, "port"), 443);
+                int interval = ParseInt(GetArg(args, "interval"), 5);
+                string mode = GetArg(args, "mode", "auto");
+                string proxy = GetArg(args, "proxy");
+                int timeout = ParseInt(GetArg(args, "timeout"), 2000);
+                int rounds = ParseInt(GetArg(args, "rounds"), 3);
+
+                return await MultiPingNative.RunAsync(host, protocol, port, interval, mode, proxy, timeout, rounds);
+            }
+
             throw new Exception($"Unknown native host: {uri.Host}");
+        }
+
+        private static string GetArg(Dictionary<string, string> args, string key, string defaultValue = "")
+        {
+            return args.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v) ? v : defaultValue;
+        }
+
+        private static int ParseInt(string value, int defaultValue)
+        {
+            return int.TryParse(value, out int v) ? v : defaultValue;
         }
 
         private async Task<string> FetchRawAsync(string methodStr, string url, string body, Dictionary<string, string> headers, string encoding, System.Threading.CancellationToken token, string proxy = null)
