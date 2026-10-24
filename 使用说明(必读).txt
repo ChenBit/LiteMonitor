@@ -57,11 +57,18 @@ LiteMonitor 是一款代码完全开源的免费软件。
 因涉及底层硬件数据读取，部分杀毒软件可能会拦截此软件。
 如果运行软件或者设置开机启动时出现拦截，请将软件目录添加至杀软信任/白名单。
 
-* 项目主页 & 源码查看:
+  版权所有 (Copyright):
+  © 2025 Diorser / LiteMonitor Project
+  © 2026 ChenBit / LiteMonitor (Fork 维护)
+
+* 项目原主页:
   https://github.com/Diorser/LiteMonitor
 
+* 项目现主页:
+  https://github.com/ChenBit/LiteMonitor
+
 * 问题反馈 (BUG/需求提交):
-  https://github.com/Diorser/LiteMonitor/issues
+  https://github.com/ChenBit/LiteMonitor/issues
 
 如果您觉得这个工具好用，欢迎在 GitHub 上点一个 Star (⭐) 支持一下，感谢！
 

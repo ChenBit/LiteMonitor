@@ -175,11 +175,17 @@ Output:
 ## 📄 License
 Released under the **MIT License** (free for personal & commercial use).
 
+**Copyright:** © 2025 Diorser / LiteMonitor Project  
+**Fork Maintainer:** © 2026 ChenBit / LiteMonitor
+
 ---
 
 ## 💬 Contact
-**Author:** Diorser  
-**GitHub:** https://github.com/Diorser/LiteMonitor
+**Original Author:** Diorser  
+**Original Project:** https://github.com/Diorser/LiteMonitor
+
+**Maintainer (Fork):** ChenBit  
+**Fork Project:** https://github.com/ChenBit/LiteMonitor
 
 ---
 

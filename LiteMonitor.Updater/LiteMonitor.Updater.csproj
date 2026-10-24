@@ -20,7 +20,7 @@
 		<Company>LiteMonitor</Company>
 		<Product>LiteMonitor Auto Updater</Product>
 		<Description>Automatic update component for LiteMonitor system monitoring tool.</Description>
-		<Copyright>Copyright © 2025-2026 LiteMonitor Team</Copyright>
+		<Copyright>Copyright © 2025-2026 LiteMonitor Team, © 2026 ChenBit (https://github.com/ChenBit/LiteMonitor)</Copyright>
 		<FileVersion>1.2.5.0</FileVersion>
 		<AssemblyVersion>1.2.5.0</AssemblyVersion>
 
