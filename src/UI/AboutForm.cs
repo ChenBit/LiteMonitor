@@ -99,7 +99,7 @@ namespace LiteMonitor
             // === GitHub 链接 ===
             var githubLink = new LinkLabel
             {
-                Text = "GitHub: github.com/Diorser/LiteMonitor",
+                Text = "GitHub: github.com/ChenBit/LiteMonitor",
                 LinkColor = Color.SkyBlue,
                 ActiveLinkColor = Color.LightSkyBlue,
                 VisitedLinkColor = Color.DeepSkyBlue,
@@ -110,7 +110,7 @@ namespace LiteMonitor
             {
                 try
                 {
-                    Process.Start(new ProcessStartInfo("https://github.com/Diorser/LiteMonitor")
+                    Process.Start(new ProcessStartInfo("https://github.com/ChenBit/LiteMonitor")
                     { UseShellExecute = true });
                 }
                 catch { }
@@ -135,7 +135,7 @@ namespace LiteMonitor
             {
                 try
                 {
-                    Process.Start(new ProcessStartInfo("https://github.com/Diorser/LiteMonitor/issues")
+                    Process.Start(new ProcessStartInfo("https://github.com/ChenBit/LiteMonitor/issues")
                     { UseShellExecute = true });
                 }
                 catch { }

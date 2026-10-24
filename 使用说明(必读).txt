@@ -5,11 +5,12 @@
 
 [1] 运行环境 (必读)
 ----------------------------------------------------------------
-本软件基于微软最新的 .NET 8 框架开发。
-如果双击软件无反应或报错，请确保安装了【.NET Desktop Runtime 8.0】环境。
+本仓库正式发布的 Windows x64 ZIP 已包含 .NET 运行时。
+解压整个压缩包后运行 LiteMonitor.exe，无需单独安装 .NET。
+请保留全部 DLL 和 resources 目录，不要只复制单个 EXE。
 
-* 下载地址 (微软官网):
-  https://dotnet.microsoft.com/zh-cn/download/dotnet/thank-you/runtime-desktop-8.0.22-windows-x64-installer
+下载与校验文件：
+  https://github.com/ChenBit/LiteMonitor/releases/latest
 
 
 [2] 权限与驱动说明
@@ -21,7 +22,7 @@
 2. 为了能够读取CPU温度/频率/功耗等数据，本软件需依赖PawnIO驱动
    * 软件启动时会自动检测是否安装PawnIO驱动，若未安装会自动提醒安装。
    * 如果自动安装失败，您可以手动下载 PawnIO 驱动进行安装。
-   * 下载地址: https://gitee.com/Diorser/LiteMonitor/raw/master/resources/assets/PawnIO_setup.exe
+   * 下载地址: 发布包 resources/PawnIO_setup.exe（已随包提供）
 
 
 [3] 关键文件与数据管理
